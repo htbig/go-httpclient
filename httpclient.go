@@ -189,7 +189,7 @@ func prepareRequest(method string, url_ string, headers map[string]string,
 // Prepare a transport.
 //
 // Handles timemout, proxy and maybe other transport related options here.
-func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
+func prepareTransport(options map[int]interface{}) (http.RoundTripper, time.Duration, error) {
 	transport := &http.Transport{}
 
 	var connectTimeout time.Duration
@@ -198,14 +198,14 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 		if connectTimeoutMS, ok := connectTimeoutMS_.(int); ok {
 			connectTimeout = time.Duration(connectTimeoutMS) * time.Millisecond
 		} else {
-			return nil, fmt.Errorf("OPT_CONNECTTIMEOUT_MS must be int")
+			return nil, 0, fmt.Errorf("OPT_CONNECTTIMEOUT_MS must be int")
 		}
 	} else if connectTimeout_, ok := options[OPT_CONNECTTIMEOUT]; ok {
 		if connectTimeout, ok = connectTimeout_.(time.Duration); !ok {
 			if connectTimeoutS, ok := connectTimeout_.(int); ok {
 				connectTimeout = time.Duration(connectTimeoutS) * time.Second
 			} else {
-				return nil, fmt.Errorf("OPT_CONNECTTIMEOUT must be int or time.Duration")
+				return nil, 0, fmt.Errorf("OPT_CONNECTTIMEOUT must be int or time.Duration")
 			}
 		}
 	}
@@ -216,14 +216,14 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 		if timeoutMS, ok := timeoutMS_.(int); ok {
 			timeout = time.Duration(timeoutMS) * time.Millisecond
 		} else {
-			return nil, fmt.Errorf("OPT_TIMEOUT_MS must be int")
+			return nil, 0, fmt.Errorf("OPT_TIMEOUT_MS must be int")
 		}
 	} else if timeout_, ok := options[OPT_TIMEOUT]; ok {
 		if timeout, ok = timeout_.(time.Duration); !ok {
 			if timeoutS, ok := timeout_.(int); ok {
 				timeout = time.Duration(timeoutS) * time.Second
 			} else {
-				return nil, fmt.Errorf("OPT_TIMEOUT must be int or time.Duration")
+				return nil, 0, fmt.Errorf("OPT_TIMEOUT must be int or time.Duration")
 			}
 		}
 	}
@@ -247,10 +247,6 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 			if err != nil {
 				return nil, err
 			}
-		}
-
-		if timeout > 0 {
-			conn.SetDeadline(time.Now().Add(timeout))
 		}
 
 		return conn, nil
@@ -280,20 +276,20 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 				return u, nil
 			}
 		} else {
-			return nil, fmt.Errorf("OPT_PROXY_FUNC is not a desired function")
+			return nil, 0, fmt.Errorf("OPT_PROXY_FUNC is not a desired function")
 		}
 	} else {
 		var proxytype int
 		if proxytype_, ok := options[OPT_PROXYTYPE]; ok {
 			if proxytype, ok = proxytype_.(int); !ok || proxytype != PROXY_HTTP {
-				return nil, fmt.Errorf("OPT_PROXYTYPE must be int, and only PROXY_HTTP is currently supported")
+				return nil, 0, fmt.Errorf("OPT_PROXYTYPE must be int, and only PROXY_HTTP is currently supported")
 			}
 		}
 
 		var proxy string
 		if proxy_, ok := options[OPT_PROXY]; ok {
 			if proxy, ok = proxy_.(string); !ok {
-				return nil, fmt.Errorf("OPT_PROXY must be string")
+				return nil, 0, fmt.Errorf("OPT_PROXY must be string")
 			}
 
 			if !strings.Contains(proxy, "://") {
@@ -301,7 +297,7 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 			}
 			proxyUrl, err := url.Parse(proxy)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			transport.Proxy = http.ProxyURL(proxyUrl)
 		}
@@ -318,7 +314,7 @@ func prepareTransport(options map[int]interface{}) (http.RoundTripper, error) {
 		tls_config.InsecureSkipVerify = unsafe_tls
 	}
 
-	return transport, nil
+	return transport, timeout, nil
 }
 
 // Prepare a redirect policy.
@@ -565,10 +561,10 @@ func (this *HttpClient) Do(method string, url string, headers map[string]string,
 	var transport http.RoundTripper
 	var jar http.CookieJar
 	var err error
-
+	var timeout time.Duration
 	// transport
 	if this.transport == nil || !this.reuseTransport {
-		transport, err = prepareTransport(options)
+		transport, timeout, err = prepareTransport(options)
 		if err != nil {
 			this.reset()
 			return nil, err
@@ -608,6 +604,7 @@ func (this *HttpClient) Do(method string, url string, headers map[string]string,
 		Transport:     transport,
 		CheckRedirect: redirect,
 		Jar:           jar,
+		Timeout:       timeout,
 	}
 
 	req, err := prepareRequest(method, url, headers, body, options)
